@@ -44,9 +44,9 @@ const SuccessForm: React.FC<SuccessFormProps> = ({ formData, onRestart }) => {
         
         // Provide specific error messages
         if (error.message.includes('Cannot connect to backend server')) {
-          setErrorMessage('Não foi possível conectar ao servidor. Verifique se o backend está rodando na porta 3001.');
+          setErrorMessage('Não foi possível conectar às Firebase Functions. Verifique se o emulador está rodando ou se as funções estão deployadas.');
         } else if (error.message.includes('Failed to fetch')) {
-          setErrorMessage('Erro de conexão com o servidor. Verifique sua conexão de internet.');
+          setErrorMessage('Erro de conexão com Firebase Functions. Verifique sua conexão de internet.');
         } else {
           setErrorMessage(error.message || 'Erro desconhecido durante o cadastro');
         }
@@ -103,8 +103,8 @@ const SuccessForm: React.FC<SuccessFormProps> = ({ formData, onRestart }) => {
           <div className="text-sm text-red-800 space-y-2">
             <p><strong>💡 Soluções possíveis:</strong></p>
             <ul className="text-left space-y-1 ml-4">
-              <li>• Verifique se o backend está rodando: <code className="bg-red-100 px-1 rounded">npm run dev:backend</code></li>
-              <li>• Confirme que o servidor está em <code className="bg-red-100 px-1 rounded">http://localhost:3001</code></li>
+              <li>• Verifique se o emulador Firebase está rodando: <code className="bg-red-100 px-1 rounded">firebase emulators:start</code></li>
+              <li>• Confirme que as funções estão em <code className="bg-red-100 px-1 rounded">{import.meta.env.VITE_API_URL}</code></li>
               <li>• Verifique sua conexão de internet</li>
               <li>• Tente novamente em alguns segundos</li>
             </ul>

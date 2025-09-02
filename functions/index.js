@@ -1,6 +1,7 @@
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
 const twilio = require('twilio');
+const cors = require('cors')({ origin: true });
 
 // Initialize Firebase Admin SDK
 admin.initializeApp();
@@ -202,131 +203,272 @@ exports.checkMedicationReminders = functions.pubsub
   });
 
 // Function to handle WhatsApp webhook responses
-exports.handleWhatsAppWebhook = functions.https.onRequest(async (req, res) => {
-  // Enable CORS
-  res.set('Access-Control-Allow-Origin', '*');
-  res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+exports.handleWhatsAppWebhook = functions.https.onRequest((req, res) => {
+  return cors(req, res, async () => {
+    try {
+      const { From, Body } = req.body;
+      const phoneNumber = From?.replace('whatsapp:', '') || '';
+      const message = Body?.trim() || '';
 
-  if (req.method === 'OPTIONS') {
-    res.status(200).send();
-    return;
-  }
+      console.log(`📱 WhatsApp webhook: ${phoneNumber} -> ${message}`);
 
-  try {
-    const { From, Body } = req.body;
-    const phoneNumber = From?.replace('whatsapp:', '') || '';
-    const message = Body?.trim() || '';
-
-    console.log(`📱 WhatsApp webhook: ${phoneNumber} -> ${message}`);
-
-    // Find the idoso by phone number
-    const idososSnapshot = await db
-      .collection('idosos')
-      .where('whatsapp', '==', phoneNumber.replace('+55', ''))
-      .get();
-
-    if (idososSnapshot.empty) {
-      console.log(`❌ No idoso found for phone: ${phoneNumber}`);
-      res.json({ success: false, error: 'Idoso not found' });
-      return;
-    }
-
-    const idoso = { id: idososSnapshot.docs[0].id, ...idososSnapshot.docs[0].data() };
-
-    if (['1', '2', '3'].includes(message)) {
-      const statusMap = { '1': 'tomou', '2': 'nao_tomou', '3': 'adiado' };
-      const newStatus = statusMap[message];
-
-      // Find the most recent pending reminder for this idoso
-      const lembreteSnapshot = await db
-        .collection('lembretes_status')
-        .where('idosoId', '==', idoso.id)
-        .where('status', '==', 'enviado')
-        .orderBy('dataHora', 'desc')
-        .limit(1)
+      // Find the idoso by phone number
+      const idososSnapshot = await db
+        .collection('idosos')
+        .where('whatsapp', '==', phoneNumber.replace('+55', ''))
         .get();
 
-      if (!lembreteSnapshot.empty) {
-        const lembreteDoc = lembreteSnapshot.docs[0];
-        
-        await lembreteDoc.ref.update({
-          status: newStatus,
-          ultimaResposta: admin.firestore.FieldValue.serverTimestamp(),
-          respostaRecebida: message
-        });
-
-        console.log(`✅ Updated reminder status to: ${newStatus}`);
-
-        // If adiado (3), schedule a new reminder in 10 minutes
-        if (message === '3') {
-          const lembreteData = lembreteDoc.data();
-          const medicamentoDoc = await db.collection('medicamentos').doc(lembreteData.medicamentoId).get();
-          
-          if (medicamentoDoc.exists) {
-            const medicamento = medicamentoDoc.data();
-            
-            // Create delayed reminder
-            const delayedReminderRef = db.collection('lembretes_status').doc();
-            await delayedReminderRef.set({
-              medicamentoId: lembreteData.medicamentoId,
-              idosoId: idoso.id,
-              dataHora: admin.firestore.FieldValue.serverTimestamp(),
-              status: 'agendado_adiado',
-              tentativas: 1,
-              horarioOriginal: lembreteData.horarioOriginal,
-              adiadoPor: 10 // minutes
-            });
-
-            console.log('⏰ Scheduled delayed reminder for 10 minutes');
-          }
-        }
+      if (idososSnapshot.empty) {
+        console.log(`❌ No idoso found for phone: ${phoneNumber}`);
+        res.json({ success: false, error: 'Idoso not found' });
+        return;
       }
 
-      // Send confirmation message
-      const confirmationMessages = {
-        '1': `Perfeito, ${idoso.nome}! ✔️ Registramos que você tomou o medicamento. Obrigado!`,
-        '2': `Entendido. Foi registrado que o medicamento não foi tomado. Se precisar de ajuda, fale com seu responsável.`,
-        '3': `Ok, vamos lembrar de novo em 10 minutos — responda 1 quando tomar :)`
-      };
+      const idoso = { id: idososSnapshot.docs[0].id, ...idososSnapshot.docs[0].data() };
 
-      await sendWhatsAppMessage(phoneNumber, confirmationMessages[message]);
+      if (['1', '2', '3'].includes(message)) {
+        const statusMap = { '1': 'tomou', '2': 'nao_tomou', '3': 'adiado' };
+        const newStatus = statusMap[message];
+
+        // Find the most recent pending reminder for this idoso
+        const lembreteSnapshot = await db
+          .collection('lembretes_status')
+          .where('idosoId', '==', idoso.id)
+          .where('status', '==', 'enviado')
+          .orderBy('dataHora', 'desc')
+          .limit(1)
+          .get();
+
+        if (!lembreteSnapshot.empty) {
+          const lembreteDoc = lembreteSnapshot.docs[0];
+          
+          await lembreteDoc.ref.update({
+            status: newStatus,
+            ultimaResposta: admin.firestore.FieldValue.serverTimestamp(),
+            respostaRecebida: message
+          });
+
+          console.log(`✅ Updated reminder status to: ${newStatus}`);
+
+          // If adiado (3), schedule a new reminder in 10 minutes
+          if (message === '3') {
+            const lembreteData = lembreteDoc.data();
+            const medicamentoDoc = await db.collection('medicamentos').doc(lembreteData.medicamentoId).get();
+            
+            if (medicamentoDoc.exists) {
+              const medicamento = medicamentoDoc.data();
+              
+              // Create delayed reminder
+              const delayedReminderRef = db.collection('lembretes_status').doc();
+              await delayedReminderRef.set({
+                medicamentoId: lembreteData.medicamentoId,
+                idosoId: idoso.id,
+                dataHora: admin.firestore.FieldValue.serverTimestamp(),
+                status: 'agendado_adiado',
+                tentativas: 1,
+                horarioOriginal: lembreteData.horarioOriginal,
+                adiadoPor: 10 // minutes
+              });
+
+              console.log('⏰ Scheduled delayed reminder for 10 minutes');
+            }
+          }
+        }
+
+        // Send confirmation message
+        const confirmationMessages = {
+          '1': `Perfeito, ${idoso.nome}! ✔️ Registramos que você tomou o medicamento. Obrigado!`,
+          '2': `Entendido. Foi registrado que o medicamento não foi tomado. Se precisar de ajuda, fale com seu responsável.`,
+          '3': `Ok, vamos lembrar de novo em 10 minutos — responda 1 quando tomar :)`
+        };
+
+        await sendWhatsAppMessage(phoneNumber, confirmationMessages[message]);
+        
+      } else if (message.toLowerCase() === 'sair') {
+        // Deactivate all medications for this idoso
+        const medicamentosSnapshot = await db
+          .collection('medicamentos')
+          .where('idosoId', '==', idoso.id)
+          .where('ativo', '==', true)
+          .get();
+
+        const batch = db.batch();
+        medicamentosSnapshot.docs.forEach(doc => {
+          batch.update(doc.ref, { ativo: false, desativadoEm: admin.firestore.FieldValue.serverTimestamp() });
+        });
+        await batch.commit();
+
+        await sendWhatsAppMessage(
+          phoneNumber,
+          `${idoso.nome}, os lembretes foram interrompidos conforme solicitado.\n\nPara reativar, entre em contato com seu responsável.\n\nCuide-se! 💙`
+        );
+        
+        console.log(`🛑 Deactivated all medications for ${idoso.nome}`);
+        
+      } else {
+        await sendWhatsAppMessage(
+          phoneNumber,
+          'Resposta não reconhecida. Responda:\n1 - Tomei\n2 - Não tomei\n3 - Adiar\nOu envie "SAIR" para parar.'
+        );
+      }
+
+      res.json({ success: true });
       
-    } else if (message.toLowerCase() === 'sair') {
-      // Deactivate all medications for this idoso
-      const medicamentosSnapshot = await db
-        .collection('medicamentos')
-        .where('idosoId', '==', idoso.id)
-        .where('ativo', '==', true)
+    } catch (error) {
+      console.error('❌ Error in WhatsApp webhook:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+});
+
+// HTTP function to save registration data
+exports.saveRegistration = functions.https.onRequest((req, res) => {
+  return cors(req, res, async () => {
+    try {
+      const { responsavel, idoso, contatos, medicamentos, lgpdConsent } = req.body;
+
+      if (!responsavel || !idoso || !medicamentos || lgpdConsent !== true) {
+        res.status(400).json({ success: false, error: "Dados obrigatórios faltando" });
+        return;
+      }
+
+      // Save responsavel
+      const responsavelRef = await db.collection('responsaveis').add({
+        ...responsavel,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      // Save idoso
+      const idosoRef = await db.collection('idosos').add({
+        ...idoso,
+        responsavelId: responsavelRef.id,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      // Save medicamentos
+      const medicamentosPromises = medicamentos.map(med => 
+        db.collection('medicamentos').add({
+          ...med,
+          idosoId: idosoRef.id,
+          ativo: true,
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        })
+      );
+      const savedMedicamentos = await Promise.all(medicamentosPromises);
+
+      // Save contatos if provided
+      let savedContatos = [];
+      if (contatos && contatos.length > 0) {
+        const contatosPromises = contatos.map(contato =>
+          db.collection('contatos_emergencia').add({
+            ...contato,
+            idosoId: idosoRef.id,
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
+          })
+        );
+        savedContatos = await Promise.all(contatosPromises);
+      }
+
+      // Save LGPD consent
+      await db.collection('lgpd_consents').add({
+        responsavelId: responsavelRef.id,
+        aceito: lgpdConsent,
+        dataAceite: admin.firestore.FieldValue.serverTimestamp(),
+        versao: "1.0"
+      });
+
+      // Send welcome message
+      const welcomeMessage = `Olá, ${idoso.nome}! 👋\n\nSou o Cuidador Digital e vou te ajudar a lembrar dos seus medicamentos.\n\nQuando receber um lembrete, responda:\n1️⃣ para "Tomei"\n2️⃣ para "Não tomei"\n3️⃣ para "Adiar 10 min"\n\nPara parar os lembretes, envie "SAIR".\n\nVamos cuidar da sua saúde juntos! 💙`;
+      
+      const twilioResult = await sendWhatsAppMessage(idoso.whatsapp, welcomeMessage);
+
+      res.json({
+        success: true,
+        message: "Registro realizado com sucesso",
+        data: {
+          responsavelId: responsavelRef.id,
+          idosoId: idosoRef.id,
+          medicamentosCount: savedMedicamentos.length,
+          contatosCount: savedContatos.length,
+          twilioSent: twilioResult.success,
+          twilioSid: twilioResult.sid,
+        },
+      });
+      
+    } catch (error) {
+      console.error('❌ Error in saveRegistration:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+});
+
+// Function to generate reports
+exports.generateReport = functions.https.onRequest((req, res) => {
+  return cors(req, res, async () => {
+    try {
+      const { idosoId, date } = req.query;
+
+      if (!idosoId || !date) {
+        res.status(400).json({ success: false, error: 'idosoId and date are required' });
+        return;
+      }
+
+      const targetDate = new Date(date);
+      const startOfDay = new Date(targetDate);
+      startOfDay.setHours(0, 0, 0, 0);
+      
+      const endOfDay = new Date(targetDate);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      // Get reminders for the specified date
+      const lembretesSnapshot = await db
+        .collection('lembretes_status')
+        .where('idosoId', '==', idosoId)
+        .where('dataHora', '>=', admin.firestore.Timestamp.fromDate(startOfDay))
+        .where('dataHora', '<=', admin.firestore.Timestamp.fromDate(endOfDay))
         .get();
 
-      const batch = db.batch();
-      medicamentosSnapshot.docs.forEach(doc => {
-        batch.update(doc.ref, { ativo: false, desativadoEm: admin.firestore.FieldValue.serverTimestamp() });
+      // Calculate statistics
+      let tomados = 0;
+      let naoTomados = 0;
+      let adiados = 0;
+      let semResposta = 0;
+
+      lembretesSnapshot.docs.forEach(doc => {
+        const status = doc.data().status;
+        switch (status) {
+          case 'tomou': tomados++; break;
+          case 'nao_tomou': naoTomados++; break;
+          case 'adiado': adiados++; break;
+          case 'enviado':
+          case 'alerta_enviado': semResposta++; break;
+        }
       });
-      await batch.commit();
 
-      await sendWhatsAppMessage(
-        phoneNumber,
-        `${idoso.nome}, os lembretes foram interrompidos conforme solicitado.\n\nPara reativar, entre em contato com seu responsável.\n\nCuide-se! 💙`
-      );
+      const total = tomados + naoTomados + adiados + semResposta;
+
+      res.json({
+        success: true,
+        data: {
+          date: targetDate.toISOString(),
+          idosoId,
+          statistics: {
+            total,
+            tomados,
+            naoTomados,
+            adiados,
+            semResposta
+          }
+        }
+      });
       
-      console.log(`🛑 Deactivated all medications for ${idoso.nome}`);
-      
-    } else {
-      await sendWhatsAppMessage(
-        phoneNumber,
-        'Resposta não reconhecida. Responda:\n1 - Tomei\n2 - Não tomei\n3 - Adiar\nOu envie "SAIR" para parar.'
-      );
+    } catch (error) {
+      console.error('❌ Error in generateReport:', error);
+      res.status(500).json({ success: false, error: error.message });
     }
-
-    res.json({ success: true });
-    
-  } catch (error) {
-    console.error('❌ Error in WhatsApp webhook:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
+  });
 });
+exports.oldHandleWhatsAppWebhook = functions.https.onRequest(async (req, res) => {
 
 // Function to check for emergency alerts (no response after 20 minutes)
 exports.checkEmergencyAlerts = functions.pubsub

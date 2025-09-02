@@ -1,6 +1,6 @@
-// API service for backend communication
+// API service for Firebase Cloud Functions communication
 
-const API_BASE_URL = 'http://localhost:3001';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001/your_project_id/us-central1';
 
 export class ApiService {
   private baseUrl: string;
@@ -39,7 +39,7 @@ export class ApiService {
       
       // Provide more specific error messages
       if (error instanceof TypeError && error.message.includes('fetch')) {
-        throw new Error(`Cannot connect to backend server at ${this.baseUrl}. Make sure the backend is running on port 3001.`);
+        throw new Error(`Cannot connect to Firebase Functions at ${this.baseUrl}. Make sure Firebase emulator is running or check your production URL.`);
       }
       
       throw error;
@@ -65,29 +65,33 @@ export class ApiService {
       console.error(`❌ API Error (${endpoint}):`, error);
       
       if (error instanceof TypeError && error.message.includes('fetch')) {
-        throw new Error(`Cannot connect to backend server at ${this.baseUrl}. Make sure the backend is running.`);
+        throw new Error(`Cannot connect to Firebase Functions at ${this.baseUrl}. Make sure Firebase emulator is running or check your production URL.`);
       }
       
       throw error;
     }
   }
 
-  // Specific methods for the Cuidador Digital API
+  // Specific methods for the Cuidador Digital Firebase Functions
   async saveRegistration(formData: any) {
-    console.log('🚀 Submitting registration to backend...');
-    return await this.post('/api/registration', formData);
+    console.log('🚀 Submitting registration to Firebase Functions...');
+    return await this.post('/saveRegistration', formData);
   }
 
   async sendManualReminder(data: any) {
-    return await this.post('/api/send-reminder', data);
+    return await this.post('/sendManualReminder', data);
   }
 
   async checkHealth() {
-    return await this.get('/api/health');
+    return await this.get('/getHealthStatus');
   }
 
   async generateReport(idosoId: string, date: string) {
-    return await this.get(`/api/reports/${idosoId}/${date}`);
+    return await this.get(`/generateReport?idosoId=${idosoId}&date=${date}`);
+  }
+
+  async handleWhatsAppWebhook(data: any) {
+    return await this.post('/handleWhatsAppWebhook', data);
   }
 }
 

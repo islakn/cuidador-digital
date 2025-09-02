@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:backend": "cd server && node index.js",
-    "dev:full": "concurrently \"npm run dev:backend\" \"npm run dev\"",
+    "dev:functions": "firebase emulators:start --only functions",
+    "dev:full": "concurrently \"npm run dev:functions\" \"npm run dev\"",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
