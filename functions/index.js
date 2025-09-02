@@ -469,6 +469,8 @@ exports.generateReport = functions.https.onRequest((req, res) => {
   });
 });
 exports.oldHandleWhatsAppWebhook = functions.https.onRequest(async (req, res) => {
+}
+)
 
 // Function to check for emergency alerts (no response after 20 minutes)
 exports.checkEmergencyAlerts = functions.pubsub
